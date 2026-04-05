@@ -25,9 +25,20 @@ export function createToken(userId: number, username: string): string {
   );
 }
 
+function isJwtPayload(v: unknown): v is JwtPayload {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.sub === "number" &&
+    typeof o.username === "string" &&
+    typeof o.exp === "number"
+  );
+}
+
 export function decodeToken(token: string): JwtPayload | null {
   try {
-    return jwt.verify(token, conf.secretKey) as JwtPayload;
+    const decoded = jwt.verify(token, conf.secretKey);
+    return isJwtPayload(decoded) ? decoded : null;
   } catch {
     return null;
   }
