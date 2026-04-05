@@ -18,8 +18,9 @@ services:
       - "traefik.http.routers.kb.tls.certresolver=cloudflare"
       - "traefik.http.services.kb.loadbalancer.server.port=8000"
     networks:
-      - traefik-net
+      - traefik
 
 networks:
-  traefik-net:
+  traefik:
+    name: ${KB_TRAEFIK_NETWORK:-traefik-net}
     external: true
