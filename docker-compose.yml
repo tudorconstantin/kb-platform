@@ -1,0 +1,25 @@
+services:
+  kb-app:
+    build: .
+    container_name: kb-platform
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      - KB_SECRET_KEY=${KB_SECRET_KEY:-change-me-in-production}
+      - KB_BASE_URL=https://kb.constantin.rocks
+      - KB_DATA_DIR=/app/data
+      - KB_QUARTZ_DIR=/app/quartz
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kb.rule=Host(`kb.constantin.rocks`)"
+      - "traefik.http.routers.kb.entrypoints=websecure"
+      - "traefik.http.routers.kb.tls=true"
+      - "traefik.http.routers.kb.tls.certresolver=cloudflare"
+      - "traefik.http.services.kb.loadbalancer.server.port=8000"
+    networks:
+      - traefik-net
+
+networks:
+  traefik-net:
+    external: true
