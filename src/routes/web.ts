@@ -5,12 +5,20 @@ import { conf } from "../config.js";
 import { extractUser } from "../middleware/auth.js";
 import { checkAccess, listPublicVaults, listUserVaults } from "../services/vaults.js";
 
+/** Avoid treating /api/… and /auth/… as vault paths (two-segment URLs). */
+function isReservedVaultUsername(username: string): boolean {
+  return username === "api" || username === "auth";
+}
+
 /**
  * Serve Quartz static builds with auth gating.
- * 
+ *
  * Quartz outputs to: data/builds/{username}/{vault}/
  * We serve these as static files under /{username}/{vault}/
  * with access control checks.
+ *
+ * Vault URLs must use a trailing slash on the root (e.g. /u/v/) so relative
+ * asset paths (static/, index.css) resolve under the vault, not one level up.
  */
 export async function webRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", extractUser);
@@ -26,18 +34,48 @@ export async function webRoutes(app: FastifyInstance): Promise<void> {
     return landingHtml(publicVaults, ownVaults, req.user);
   });
 
+  // Vault root with trailing slash → index (register before /:username/:vault/*)
+  app.get<{ Params: { username: string; vault: string } }>(
+    "/:username/:vault/",
+    async (req, reply) => {
+      const { username, vault } = req.params;
+      if (isReservedVaultUsername(username)) {
+        return reply.callNotFound();
+      }
+
+      const access = checkAccess(username, vault, req.user);
+      if (access === "denied") {
+        if (!req.user) {
+          return reply.redirect(`/login?next=/${encodeURIComponent(username)}/${encodeURIComponent(vault)}/`);
+        }
+        return reply.code(403).send("Access denied");
+      }
+
+      const indexPath = resolve(conf.buildsDir, username, vault, "index.html");
+      if (!existsSync(indexPath)) {
+        return reply.code(404).send("Vault not built yet. Trigger a build first.");
+      }
+      reply.type("text/html");
+      return readFileSync(indexPath);
+    }
+  );
+
   // Catch-all: serve Quartz static files for /{username}/{vault}/**
   app.get<{ Params: { username: string; vault: string; "*": string } }>(
     "/:username/:vault/*",
     async (req, reply) => {
       const { username, vault } = req.params;
+      if (isReservedVaultUsername(username)) {
+        return reply.callNotFound();
+      }
       const rest = req.params["*"] || "index.html";
 
       // Access check
       const access = checkAccess(username, vault, req.user);
       if (access === "denied") {
         if (!req.user) {
-          return reply.redirect(`/login?next=/${username}/${vault}/${rest}`);
+          const next = `/${username}/${vault}/${rest}`;
+          return reply.redirect(`/login?next=${encodeURIComponent(next)}`);
         }
         return reply.code(403).send("Access denied");
       }
@@ -81,14 +119,22 @@ export async function webRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Vault root (no trailing content)
+  // Vault root without trailing slash → redirect (fixes Quartz relative asset URLs)
   app.get<{ Params: { username: string; vault: string } }>(
     "/:username/:vault",
     async (req, reply) => {
       const { username, vault } = req.params;
+      if (isReservedVaultUsername(username)) {
+        return reply.callNotFound();
+      }
+
       const access = checkAccess(username, vault, req.user);
       if (access === "denied") {
-        if (!req.user) return reply.redirect(`/login?next=/${username}/${vault}`);
+        if (!req.user) {
+          return reply.redirect(
+            `/login?next=/${encodeURIComponent(username)}/${encodeURIComponent(vault)}/`
+          );
+        }
         return reply.code(403).send("Access denied");
       }
 
@@ -96,8 +142,9 @@ export async function webRoutes(app: FastifyInstance): Promise<void> {
       if (!existsSync(indexPath)) {
         return reply.code(404).send("Vault not built yet. Trigger a build first.");
       }
-      reply.type("text/html");
-      return readFileSync(indexPath);
+
+      const q = req.url.includes("?") ? "?" + req.url.split("?").slice(1).join("?") : "";
+      return reply.redirect(`/${username}/${vault}/${q}`, 302);
     }
   );
 
@@ -178,14 +225,14 @@ function landingHtml(publicVaults: any[], ownVaults: any[], user: any): string {
   if (user && ownVaults.length) {
     body += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><h2 style="font-size:1.1rem">Your vaults</h2><a href="/dashboard" class="btn btn-p" style="font-size:.8rem">+ new vault</a></div>`;
     for (const v of ownVaults) {
-      body += `<div class="card"><a href="/${v.username}/${v.slug}">${v.title}</a> <span class="badge badge-${v.visibility}">${v.visibility}</span><br><small>${v.username}/${v.slug}</small></div>`;
+      body += `<div class="card"><a href="/${v.username}/${v.slug}/">${v.title}</a> <span class="badge badge-${v.visibility}">${v.visibility}</span><br><small>${v.username}/${v.slug}</small></div>`;
     }
   }
 
   if (publicVaults.length) {
     body += `<h2 style="font-size:1.1rem;margin:2rem 0 1rem">Public vaults</h2>`;
     for (const v of publicVaults) {
-      body += `<div class="card"><a href="/${v.username}/${v.slug}">${v.title}</a><br><small>${v.username}/${v.slug} — ${v.description || ""}</small></div>`;
+      body += `<div class="card"><a href="/${v.username}/${v.slug}/">${v.title}</a><br><small>${v.username}/${v.slug} — ${v.description || ""}</small></div>`;
     }
   }
 
@@ -237,7 +284,7 @@ async function doReg(e){
 function dashboardHtml(user: any, vaults: any[]): string {
   let cards = "";
   for (const v of vaults) {
-    cards += `<div class="card"><a href="/${user.username}/${v.slug}">${v.title}</a> <span class="badge badge-${v.visibility}">${v.visibility}</span><br><small>${user.username}/${v.slug}</small></div>`;
+    cards += `<div class="card"><a href="/${user.username}/${v.slug}/">${v.title}</a> <span class="badge badge-${v.visibility}">${v.visibility}</span><br><small>${user.username}/${v.slug}</small></div>`;
   }
   if (!vaults.length) {
     cards = `<div class="card" style="text-align:center;padding:2rem"><p style="color:var(--muted)">No vaults yet.</p></div>`;
