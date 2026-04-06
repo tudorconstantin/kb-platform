@@ -10,6 +10,7 @@ services:
       - KB_BASE_URL=https://kb.constantin.rocks
       - KB_DATA_DIR=/app/data
       - KB_QUARTZ_DIR=/app/quartz
+      - KB_MAX_UPLOAD_BYTES=${KB_MAX_UPLOAD_BYTES:-26214400}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.kb.rule=Host(`kb.constantin.rocks`)"

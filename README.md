@@ -99,7 +99,33 @@ curl -X POST -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" \
   -d '{"target_username":"collaborator","role":"editor"}' \
   $KB/api/vaults/tudorconstantin/orisig/access
+
+# Wiki-link graph (JSON: nodes + edges) for custom visualizations
+curl -H "Authorization: Bearer $KEY" \
+  $KB/api/vaults/tudorconstantin/orisig/graph
+
+# Structural lint: broken [[wiki-links]] and pages with no incoming links
+curl -H "Authorization: Bearer $KEY" \
+  $KB/api/vaults/tudorconstantin/orisig/lint
+
+# Anki export (TSV for import, or ?format=json). Pages need frontmatter tag anki (see below).
+curl -H "Authorization: Bearer $KEY" \
+  -o orisig-anki.tsv \
+  "$KB/api/vaults/tudorconstantin/orisig/anki-export?format=tsv"
+
+# Upload a file into the vault _raw/ folder (multipart: field `file`, form field `path` = relative path under _raw/)
+curl -X POST -H "Authorization: Bearer $KEY" \
+  -F "path=sources/paper.pdf" \
+  -F "file=@./paper.pdf" \
+  $KB/api/vaults/tudorconstantin/orisig/raw/upload
 ```
+
+### Anki flashcards from markdown
+
+Mark pages with **`anki: true`** or **`tags: [anki, ...]`** in YAML frontmatter.
+
+- Optional **`## Front`** / **`## Back`** sections in the body; if omitted, the note **title** (from `title:` or first `#` heading) is the front and the rest of the body is the back.
+- Export is **TSV** (`?format=tsv`, default) with columns `front`, `back`, `source` — import into Anki with “Import” and map fields, or use **`?format=json`** for tooling.
 
 ## Project structure
 
@@ -119,7 +145,12 @@ kb-platform/
 │   └── services/
 │       ├── vaults.ts         # Vault filesystem + access control
 │       ├── git.ts            # Git init/commit
-│       └── quartz.ts         # Quartz build manager
+│       ├── quartz.ts         # Quartz build manager
+│       ├── wikiLinks.ts      # [[wiki-link]] parsing
+│       ├── graph.ts          # Vault link graph JSON
+│       ├── vaultLint.ts      # Broken links + orphans
+│       ├── ankiExport.ts     # Anki TSV/JSON from tagged pages
+│       └── rawUpload.ts      # Binary uploads to _raw/
 ├── scripts/
 │   ├── setup-quartz.sh       # Clone + configure Quartz
 │   └── wiki-agent.sh         # Copilot CLI maintenance
@@ -130,9 +161,15 @@ kb-platform/
 
 ## Next steps
 
-- [ ] Anki export endpoint (generate flashcards from tagged pages)
-- [ ] Graph API (expose link graph as JSON for custom visualizations)
-- [ ] obsidian-livesync support (CouchDB real-time sync)
-- [ ] File upload endpoint (images, PDFs to _raw/)
-- [ ] Cron-based auto-lint (weekly Copilot CLI health checks)
-- [ ] OIDC auth (plug in Authentik/Authelia)
+**Implemented in this repo**
+
+- [x] **Anki export** — `GET /api/vaults/{user}/{vault}/anki-export` (`?format=tsv` or `json`). See [Anki flashcards from markdown](#anki-flashcards-from-markdown).
+- [x] **Graph API** — `GET /api/vaults/{user}/{vault}/graph` returns `{ nodes, edges }` derived from `[[wiki-links]]`.
+- [x] **File upload** — `POST /api/vaults/{user}/{vault}/raw/upload` (multipart: `file` + `path`). Max size: `KB_MAX_UPLOAD_BYTES` (default 25 MiB).
+- [x] **Structural lint** — `GET /api/vaults/{user}/{vault}/lint` returns `brokenLinks` and `orphans` (pages with no incoming wiki-links). Use for health checks or CI; no Copilot required.
+
+**Operational / external (not bundled here)**
+
+- [ ] **Cron + Copilot auto-lint** — Run `wiki-agent.sh … lint` on a schedule from the host or a job runner, or call `…/lint` weekly with an API key for link/orphan checks only. Full Copilot-based fixes still need `GITHUB_TOKEN` where that script runs.
+- [ ] **Obsidian LiveSync** — Requires a separate **CouchDB** (or compatible) server and the [obsidian-livesync](https://github.com/vrtmrz/obsidian-livesync) plugin pointed at it. This platform stays **git + REST + Quartz**; LiveSync is an alternative sync path for a local vault folder, not a substitute for the server-side git remote.
+- [ ] **OIDC (Authentik / Authelia)** — Planned: optional `KB_OIDC_*` env vars and routes to delegate login to your IdP. Today auth is **local users + API keys** only.

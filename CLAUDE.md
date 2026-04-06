@@ -30,6 +30,13 @@ curl -X PUT -H "Authorization: Bearer $KB_API_KEY" \
 
 # Trigger rebuild
 curl -X POST -H "Authorization: Bearer $KB_API_KEY" $KB_BASE/api/vaults/{username}/{vault}/build
+
+# Wiki graph JSON, structural lint, Anki export, upload to _raw/
+curl -H "Authorization: Bearer $KB_API_KEY" $KB_BASE/api/vaults/{username}/{vault}/graph
+curl -H "Authorization: Bearer $KB_API_KEY" $KB_BASE/api/vaults/{username}/{vault}/lint
+curl -H "Authorization: Bearer $KB_API_KEY" "$KB_BASE/api/vaults/{username}/{vault}/anki-export?format=tsv"
+curl -X POST -H "Authorization: Bearer $KB_API_KEY" -F "path=sub/file.pdf" -F "file=@./file.pdf" \
+  $KB_BASE/api/vaults/{username}/{vault}/raw/upload
 ```
 
 ## Vault conventions

@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import formbody from "@fastify/formbody";
+import multipart from "@fastify/multipart";
 import { watch } from "chokidar";
 
 import { conf } from "./config.js";
@@ -28,6 +29,7 @@ async function main() {
   await app.register(cookie);
   await app.register(cors, { origin: true, credentials: true });
   await app.register(formbody);
+  await app.register(multipart, { limits: { fileSize: conf.maxUploadBytes } });
 
   // Routes (order matters: specific before catch-all)
   await app.register(authRoutes);

@@ -24,6 +24,11 @@ function vaultDir(username: string, slug: string): string {
   return resolve(conf.vaultsDir, safeSlug(username), safeSlug(slug));
 }
 
+/** Resolved vault root on disk (for graph/lint/upload helpers). */
+export function getVaultPath(username: string, vaultSlug: string): string {
+  return vaultDir(username, vaultSlug);
+}
+
 function pagePath(username: string, slug: string, pagePath: string): string {
   const base = vaultDir(username, slug);
   const clean = pagePath.replace(/\\/g, "/").replace(/[^a-zA-Z0-9_/\-]/g, "");

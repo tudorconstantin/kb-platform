@@ -12,6 +12,14 @@ import {
   readPage,
   writePage,
 } from "../services/vaults.js";
+import { buildVaultGraph } from "../services/graph.js";
+import { lintVault } from "../services/vaultLint.js";
+import {
+  collectAnkiCards,
+  ankiCardsToTsv,
+  ankiCardsToJson,
+} from "../services/ankiExport.js";
+import { writeRawFile } from "../services/rawUpload.js";
 import { getDb } from "../db.js";
 
 export async function apiRoutes(app: FastifyInstance): Promise<void> {
@@ -93,6 +101,103 @@ export async function apiRoutes(app: FastifyInstance): Promise<void> {
 
       await writePage(username, vault, page, req.body.content, req.body.commit_message);
       return { ok: true, path: page };
+    }
+  );
+
+  // ── Graph (wiki-links as JSON) ───────────────────────────
+
+  app.get<{ Params: { username: string; vault: string } }>(
+    "/api/vaults/:username/:vault/graph",
+    async (req, reply) => {
+      const { username, vault } = req.params;
+      const access = checkAccess(username, vault, req.user);
+      if (access === "denied") return reply.code(403).send({ error: "Access denied" });
+
+      const graph = buildVaultGraph(username, vault);
+      if (!graph) return reply.code(404).send({ error: "Vault not found" });
+      return graph;
+    }
+  );
+
+  // ── Lint (broken wiki-links + orphan pages) ──────────────
+
+  app.get<{ Params: { username: string; vault: string } }>(
+    "/api/vaults/:username/:vault/lint",
+    async (req, reply) => {
+      const { username, vault } = req.params;
+      const access = checkAccess(username, vault, req.user);
+      if (access === "denied") return reply.code(403).send({ error: "Access denied" });
+
+      const report = lintVault(username, vault);
+      if (!report) return reply.code(404).send({ error: "Vault not found" });
+      return report;
+    }
+  );
+
+  // ── Anki export (pages tagged with `anki` in frontmatter) ─
+
+  app.get<{
+    Params: { username: string; vault: string };
+    Querystring: { format?: string };
+  }>("/api/vaults/:username/:vault/anki-export", async (req, reply) => {
+    const { username, vault } = req.params;
+    const access = checkAccess(username, vault, req.user);
+    if (access === "denied") return reply.code(403).send({ error: "Access denied" });
+
+    const cards = collectAnkiCards(username, vault);
+    const fmt = (req.query.format || "tsv").toLowerCase();
+    if (fmt === "json") {
+      reply.type("application/json");
+      return ankiCardsToJson(cards);
+    }
+    reply.type("text/tab-separated-values; charset=utf-8");
+    reply.header(
+      "Content-Disposition",
+      `attachment; filename="${vault}-anki.tsv"`
+    );
+    return ankiCardsToTsv(cards);
+  });
+
+  // ── Upload binary to _raw/ ────────────────────────────────
+
+  app.post<{ Params: { username: string; vault: string } }>(
+    "/api/vaults/:username/:vault/raw/upload",
+    { preHandler: requireUser },
+    async (req, reply) => {
+      const { username, vault } = req.params;
+      const access = checkAccess(username, vault, req.user);
+      if (access !== "owner" && access !== "editor") {
+        return reply.code(403).send({ error: "Write access required" });
+      }
+
+      let fileBuf: Buffer | null = null;
+      let relativePath = "";
+
+      const parts = req.parts();
+      for await (const part of parts) {
+        if (part.type === "file" && part.fieldname === "file") {
+          fileBuf = await part.toBuffer();
+          if (!relativePath && part.filename) {
+            relativePath = part.filename;
+          }
+        } else if (part.type === "field" && part.fieldname === "path") {
+          relativePath = String(part.value ?? "").trim();
+        }
+      }
+
+      if (!fileBuf?.length) {
+        return reply.code(400).send({ error: "Missing file field (multipart form, field name: file)" });
+      }
+      if (!relativePath) {
+        return reply.code(400).send({ error: "Missing path — use form field `path` or filename on file" });
+      }
+
+      try {
+        const result = await writeRawFile(username, vault, relativePath, fileBuf);
+        return { ok: true, ...result };
+      } catch (e: any) {
+        return reply.code(400).send({ error: e?.message || "Upload failed" });
+      }
     }
   );
 
